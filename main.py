@@ -19,6 +19,7 @@ from services.tsnSchool.tsnSchoolDao import getSchoolListDao, addOrUpdateSchool
 from tsnClient import tsnPasswordAuthServer, getTsnClientById
 from tsnRunServer import TsnRunServer, TsnRunType
 from spiderServer import startSpider
+from validCountServer import crawl_valid_count_for_account
 
 
 def getClient():
@@ -56,7 +57,7 @@ class TsnCliManager:
         print("3. 开始跑步")
         print("4. 爬取路径数据")
         print("5. 更新人脸图片")
-        print("6. 查询跑步里程")
+        print("6. 查询跑步有效次数和里程")
         print("0. 退出系统")
         print("=" * 60)
 
@@ -558,12 +559,12 @@ class TsnCliManager:
             print(f"❌ 操作失败: {str(e)}")
 
     async def query_running_distance(self):
-        """Query running distance for an account"""
-        self.print_header("查询跑步里程")
+        """查询跑步统计（各类型有效次数 + 总里程）"""
+        self.print_header("查询跑步统计")
 
         try:
             async for db in get_db():
-                # 1. Select account
+                # 选择账号（与原来一样）
                 stmt = select(TsnAccount_Model).options(
                     selectinload(TsnAccount_Model.school)
                 )
@@ -582,151 +583,33 @@ class TsnCliManager:
                     print(f"{idx}. {account.username} - {school_name} ({sys_type})")
                 print("-" * 60)
 
-                # Get account selection
                 try:
                     choice = input("\n请输入账号编号 (0=取消): ").strip()
                     if choice == '0':
                         return
-
                     account_idx = int(choice) - 1
                     if account_idx < 0 or account_idx >= len(accounts):
                         print("❌ 无效的账号编号")
                         return
-
                     selected_account = accounts[account_idx]
                     school_name = selected_account.school.school_name if selected_account.school else "未知学校"
-                    sys_type = "公版" if selected_account.school and selected_account.school.sys_type == 2 else "私版"
-                    print(f"\n已选择账号: {selected_account.username} - {school_name} ({sys_type})")
-
+                    print(f"\n已选择账号: {selected_account.username} - {school_name}")
                 except ValueError:
                     print("❌ 请输入有效的数字")
                     return
 
-                # 2. Query running distance based on account type
-                print("\n正在查询跑步里程...")
+                # 调用有效次数统计函数
+                print("\n正在查询跑步统计...")
                 try:
-                    # Get TsnClient instance
-                    tsn_client = await getTsnClientById(selected_account.id, db)
-                    
-                    total_distance = 0.0
-                    record_count = 0
-                    
-                    if tsn_client.isPublic():
-                        # Public version (公版)
-                        # Get summary
-                        try:
-                            summary = await tsn_client.sumExerciseRecord()
-                            if summary and 'sportRange' in summary:
-                                total_distance = float(summary['sportRange'])
-                                record_count = int(summary.get('sportTimes', 0))
-                        except Exception as e:
-                            logger.exception(e)
-                            print(f"⚠️ 获取公版汇总数据失败: {str(e)}")
-                            
-                        # Get detailed records
-                        if total_distance == 0.0:
-                            try:
-                                page = 1
-                                last_record_ids = set()  # Track record IDs to prevent duplicates
-                                while True:
-                                    records = await tsn_client.listExerciseRecord(runStatus=1, datePageIndex=page)
-                                    if not records or 'records' not in records:
-                                        break
-                                        
-                                    record_list = records['records']
-                                    if not record_list:
-                                        break
-                                        
-                                    # Check for duplicate records
-                                    current_record_ids = set()
-                                    has_new_records = False
-                                    for record in record_list:
-                                        record_id = record.get('id', '')
-                                        current_record_ids.add(record_id)
-                                        if record_id not in last_record_ids:
-                                            has_new_records = True
-                                            if 'sportRange' in record:
-                                                total_distance += float(record['sportRange'])
-                                        
-                                    # If no new records, break the loop
-                                    if not has_new_records:
-                                        break
-                                        
-                                    record_count += len(record_list)
-                                    last_record_ids.update(current_record_ids)
-                                    page += 1
-                                    
-                                    # Limit pages to prevent infinite loop
-                                    if page > 50:  # Max 50 pages
-                                        break
-                            except Exception as e:
-                                logger.exception(e)
-                                print(f"⚠️ 获取公版详细数据失败: {str(e)}")
-                    else:
-                        # Private version (私版)
-                        # Get summary
-                        try:
-                            summary = await tsn_client.sumSportRecord()
-                            if summary and 'sportRange' in summary:
-                                total_distance = float(summary['sportRange'])
-                                record_count = int(summary.get('sportTimes', 0))
-                        except Exception as e:
-                            logger.exception(e)
-                            print(f"⚠️ 获取私版汇总数据失败: {str(e)}")
-                            
-                        # Get detailed records
-                        if total_distance == 0.0:
-                            try:
-                                page = 1
-                                last_record_ids = set()  # Track record IDs to prevent duplicates
-                                while True:
-                                    records = await tsn_client.appSportRecordList(sportType=2, pageIndex=page, pageSize=10)
-                                    if not records or 'records' not in records:
-                                        break
-                                        
-                                    record_list = records['records']
-                                    if not record_list:
-                                        break
-                                        
-                                    # Check for duplicate records
-                                    current_record_ids = set()
-                                    has_new_records = False
-                                    for record in record_list:
-                                        record_id = record.get('id', '')
-                                        current_record_ids.add(record_id)
-                                        if record_id not in last_record_ids:
-                                            has_new_records = True
-                                            if 'sportRange' in record:
-                                                total_distance += float(record['sportRange'])
-                                        
-                                    # If no new records, break the loop
-                                    if not has_new_records:
-                                        break
-                                        
-                                    record_count += len(record_list)
-                                    last_record_ids.update(current_record_ids)
-                                    page += 1
-                                    
-                                    # Limit pages to prevent infinite loop
-                                    if page > 50:  # Max 50 pages
-                                        break
-                            except Exception as e:
-                                logger.exception(e)
-                                print(f"⚠️ 获取私版详细数据失败: {str(e)}")
-
-                    # Display results
+                    vc = await crawl_valid_count_for_account(selected_account.id)
                     print("\n" + "=" * 60)
-                    print("跑步里程查询结果:")
                     print(f"  账号: {selected_account.username}")
                     print(f"  学校: {school_name}")
-                    print(f"  类型: {sys_type}")
-                    print(f"  总里程: {total_distance:.2f} 公里")
-                    print(f"  记录数: {record_count} 条")
+                    print("-" * 60)
+                    print(vc)
                     print("=" * 60)
                     print("\n✅ 查询完成！")
-
                 except Exception as e:
-                    logger.exception(e)
                     print(f"\n❌ 查询失败: {str(e)}")
 
         except Exception as e:
