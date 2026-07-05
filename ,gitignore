@@ -1,4 +1,6 @@
+*.pyc
+__pycache__/
+.idea/
 *.db
 face_images/
-__pycache__/
 .venv/
