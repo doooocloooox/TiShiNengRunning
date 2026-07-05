@@ -61,23 +61,49 @@ class TsnCliManager:
         print("=" * 60)
 
     async def update_school_list(self):
-        """Update school list"""
+        """Update school list with province selection, no city filter"""
         self.print_header("更新学校列表")
-        print("正在从服务器获取学校列表，请稍候...")
+        print("正在从服务器获取省份列表...")
 
         try:
+            tsn = getClient()
+            resp = await tsn.findAllProvince()
+            if not resp or 'data' not in resp:
+                print("❌ 获取省份列表失败")
+                return
+
+            provinces = resp['data']
+
+            # 1. 选择省份
+            print("\n请选择要更新的省份（输入编号）:")
+            print("-" * 60)
+            for idx, province in enumerate(provinces, 1):
+                print(f"{idx}. {province['province_name']}")
+            print("0. 更新全部省份")
+            print("-" * 60)
+
+            choice = input("\n请输入省份编号 (0=全部): ").strip()
+            if choice == '0':
+                selected_provinces = provinces
+                print("将更新全部省份...")
+            else:
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(provinces):
+                        selected_provinces = [provinces[idx]]
+                        print(f"已选择: {provinces[idx]['province_name']}")
+                    else:
+                        print("❌ 无效编号，将更新全部省份")
+                        selected_provinces = provinces
+                except ValueError:
+                    print("❌ 输入无效，将更新全部省份")
+                    selected_provinces = provinces
+
+            total_schools = 0
+            seq = 0  # 序号
+
             async for db in get_db():
-                tsn = getClient()
-                resp = await tsn.findAllProvince()
-
-                if not resp or 'data' not in resp:
-                    print("❌ 获取省份列表失败")
-                    return
-
-                provinces = resp['data']
-                total_schools = 0
-
-                for province in provinces:
+                for province in selected_provinces:
                     province_name = province['province_name']
                     print(f"\n正在处理省份: {province_name}")
 
@@ -89,11 +115,13 @@ class TsnCliManager:
                     for school in schools:
                         school_name = school['school_name']
 
-                        # Skip demo and test schools
+                        # 跳过演示和测试学校
                         if 'demo' in school_name.lower() or 'test' in school_name.lower():
                             continue
 
-                        # Get LAN URL for public version schools
+                        seq += 1
+
+                        # 获取公版学校的内网 URL
                         lan_url = None
                         if school['sysType'] == '2':
                             try:
@@ -105,24 +133,25 @@ class TsnCliManager:
                             except Exception as e:
                                 logger.debug(f"Failed to get school info for {school_name}: {e}")
 
-                        # Save to database
+                        # 保存到数据库
                         await addOrUpdateSchool(
-                            school['school_id'],
-                            school['school_name'],
-                            school['school_url'],
-                            lan_url,
-                            school['openId'],
-                            school['isOpenKeep'] == '1',
-                            school['isOpenLive'] == '1',
-                            school['isOpenEncry'] == '1',
-                            int(school['sysType']),
-                            school['schoolCode'],
-                            db
+                            school['school_id'],        # school_id
+                            school['school_name'],       # schoolName
+                            school['school_url'],        # schoolUrl
+                            lan_url,                     # lanUrl
+                            school['openId'],            # openId
+                            school['isOpenKeep'] == '1', # isOpenKeep
+                            school['isOpenLive'] == '1', # isOpenLive
+                            school['isOpenEncry'] == '1',# isOpenEncry
+                            int(school['sysType']),      # sys_type
+                            school['schoolCode'],        # school_code
+                            db,                           # session
+                            province_name = province['province_name']
                         )
                         total_schools += 1
-                        print(f"  ✓ {school_name}")
+                        print(f"  {seq}. {school_name}")  # 带序号打印
 
-                print(f"\n✅ 学校列表更新完成！共更新 {total_schools} 所学校")
+            print(f"\n✅ 学校列表更新完成！共更新 {total_schools} 所学校")
 
         except Exception as e:
             logger.exception(e)
@@ -135,33 +164,69 @@ class TsnCliManager:
         try:
             # 1. Select school
             async for db in get_db():
-                schools = await getSchoolListDao(db)
+                # 获取所有学校
+                all_schools = await getSchoolListDao(db)
 
-                if not schools:
-                    print("❌ 没有可用的学校，请先更新学校列表")
+                # 提取有省份记录的学校（已更新过的才有 province_name）
+                province_set = set()
+                for s in all_schools:
+                    if s.province_name:
+                        province_set.add(s.province_name)
+                province_list = sorted(province_set)
+
+                if not province_list:
+                    print("❌ 数据库中没有省份信息，请先更新学校列表")
+                    return
+
+                print("\n请选择省份（输入编号）:")
+                print("-" * 60)
+                for idx, pname in enumerate(province_list, 1):
+                    print(f"{idx}. {pname}")
+                print("0. 显示所有学校")
+                print("-" * 60)
+
+                try:
+                    p_choice = input("\n请输入省份编号 (0=全部): ").strip()
+                    if p_choice == '0':
+                        filtered_schools = all_schools
+                    else:
+                        p_idx = int(p_choice) - 1
+                        if 0 <= p_idx < len(province_list):
+                            selected_province = province_list[p_idx]
+                            print(f"已选择省份: {selected_province}")
+                            filtered_schools = [s for s in all_schools if s.province_name == selected_province]
+                        else:
+                            print("❌ 无效编号，将显示全部学校")
+                            filtered_schools = all_schools
+                except ValueError:
+                    print("❌ 输入无效，将显示全部学校")
+                    filtered_schools = all_schools
+
+                # 按 school_id 排序（保证顺序与更新时一致）
+                filtered_schools.sort(key=lambda s: s.school_id)
+
+                if not filtered_schools:
+                    print("❌ 所选省份下没有学校，请先更新学校列表")
                     return
 
                 print("\n请选择学校:")
                 print("-" * 60)
-                for idx, school in enumerate(schools, 1):
+                for idx, school in enumerate(filtered_schools, 1):
                     sys_type_name = "公版" if school.sys_type == 2 else "私版"
                     print(f"{idx}. {school.school_name} ({sys_type_name})")
                 print("-" * 60)
 
-                # Get user selection
+                # 用户选择学校
                 try:
                     choice = input("\n请输入学校编号 (0=取消): ").strip()
                     if choice == '0':
                         return
-
                     school_idx = int(choice) - 1
-                    if school_idx < 0 or school_idx >= len(schools):
+                    if school_idx < 0 or school_idx >= len(filtered_schools):
                         print("❌ 无效的学校编号")
                         return
-
-                    selected_school = schools[school_idx]
+                    selected_school = filtered_schools[school_idx]
                     print(f"\n已选择: {selected_school.school_name}")
-
                 except ValueError:
                     print("❌ 请输入有效的数字")
                     return

@@ -79,6 +79,6 @@ class TsnSchool_Model(Base):
     is_open_encry = Column(Boolean, default=False)
     sys_type = Column(Integer, nullable=False)
     school_code = Column(String(128), nullable=False)
-
+    province_name = Column(String(50), nullable=True)
     def isPublicVersion(self):
         return self.sys_type == 2

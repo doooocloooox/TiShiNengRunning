@@ -5,7 +5,7 @@ from models import TsnSchool_Model
 
 async def addOrUpdateSchool(schoolId, schoolName, schoolUrl, lanUrl, openId, isOpenKeep, isOpenLive, isOpenEncry,
                             sys_type, school_code,
-                            session):
+                            session, province_name=None):
     stmt = select(TsnSchool_Model).where(TsnSchool_Model.school_id == schoolId)
     school = await session.execute(stmt)
     school = school.scalars().first()
@@ -19,7 +19,7 @@ async def addOrUpdateSchool(schoolId, schoolName, schoolUrl, lanUrl, openId, isO
             is_open_live=isOpenLive,
             is_open_encry=isOpenEncry,
             sys_type=sys_type,
-            school_code=school_code
+            province_name=province_name
         )
         await session.execute(stmt)
         await session.flush()
@@ -34,7 +34,8 @@ async def addOrUpdateSchool(schoolId, schoolName, schoolUrl, lanUrl, openId, isO
             is_open_live=isOpenLive,
             is_open_encry=isOpenEncry,
             sys_type=sys_type,
-            school_code=school_code
+            school_code=school_code,
+            province_name=province_name
         )
         session.add(school)
         await session.flush()
