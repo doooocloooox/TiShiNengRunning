@@ -1,7 +1,5 @@
 import uuid
-
 from loguru import logger
-
 from TiShiNengError import TiShiNengError
 from TiShiNengSdkPrivate import TiShiNengPrivate
 from TiShiNengSdkPublic import TiShiNengSdkPublic
@@ -10,7 +8,6 @@ from deviceModel import deviceModel
 from models import TsnAccount_Model
 from services.tsnAccount.tsnAccountDao import updateAccessToken, getTsnAccountByid, getTsnAccountByUid, addTsnAccount
 from services.tsnSchool.tsnSchoolDao import getSchoolBySchoolId
-
 
 async def getPublicVersionClient(accountModel: TsnAccount_Model):
     schoolId = accountModel.school_id
@@ -27,8 +24,7 @@ async def getPublicVersionClient(accountModel: TsnAccount_Model):
     fresh_token = accountModel.refresh_token
     username = accountModel.username
     password = accountModel.password
-    tsn = TiShiNengSdkPublic(uid, schoolId, schoolCode, openId, deviceId, brandName, deviceNum, osVersion, access_token,
-                             a_list)
+    tsn = TiShiNengSdkPublic(uid, schoolId, schoolCode, openId, deviceId, brandName, deviceNum, osVersion, access_token, a_list)
     if lan_url != '' and lan_url is not None:
         tsn.setCloudUrl(lan_url)
     try:
@@ -36,25 +32,22 @@ async def getPublicVersionClient(accountModel: TsnAccount_Model):
         logger.info(freshTokenResp)
         if 'msg' not in freshTokenResp:
             async for newDb in get_db():
-                await updateAccessToken(accountModel.id, newDb, freshTokenResp['access_token'],
-                                        freshTokenResp['refresh_token'], freshTokenResp['expires_in'])
+                await updateAccessToken(accountModel.id, newDb, freshTokenResp['access_token'], freshTokenResp['refresh_token'], freshTokenResp['expires_in'])
             tsn.setToken(freshTokenResp['access_token'])
     except TiShiNengError as e:
         if e.code == 401:
-            logger.info("token失效，重新获取")
+            logger.info('token失效，重新获取')
             tokenResp = await tsn.getAccessToken(username, password)
             logger.info(tokenResp)
             if 'msg' not in tokenResp:
                 async for newDb in get_db():
-                    await updateAccessToken(accountModel.id, newDb, tokenResp['access_token'],
-                                            tokenResp['refresh_token'], tokenResp['expires_in'])
+                    await updateAccessToken(accountModel.id, newDb, tokenResp['access_token'], tokenResp['refresh_token'], tokenResp['expires_in'])
                 tsn.setToken(tokenResp['access_token'])
             else:
                 raise TiShiNengError(tokenResp['msg'], 10001)
         else:
             raise e
     return tsn
-
 
 async def getPrivateVersionClient(accountModel: TsnAccount_Model):
     schoolId = accountModel.school_id
@@ -75,10 +68,10 @@ async def getPrivateVersionClient(accountModel: TsnAccount_Model):
     try:
         testTokenResp = await tsn.getStudentInfo()
         if testTokenResp is None:
-            raise TiShiNengError("token失效", 401)
+            raise TiShiNengError('token失效', 401)
     except TiShiNengError as e:
         if e.code == 401 or e.message == '登录失效' or '学生信息系统不存在' in e.message:
-            logger.info("token失效，重新获取")
+            logger.info('token失效，重新获取')
             tokenResp = await tsn.appLogin(username, password)
             logger.info(tokenResp)
             async for newDb in get_db():
@@ -88,7 +81,6 @@ async def getPrivateVersionClient(accountModel: TsnAccount_Model):
             raise e
     return tsn
 
-
 async def getTsnClientById(accountId, session):
     account: TsnAccount_Model = await getTsnAccountByid(accountId, session)
     if account.school.sys_type == 2:
@@ -96,8 +88,7 @@ async def getTsnClientById(accountId, session):
     elif account.school.sys_type == 1:
         return await getPrivateVersionClient(account)
     else:
-        raise TiShiNengError("未知的系统类型", 10001)
-
+        raise TiShiNengError('未知的系统类型', 10001)
 
 async def getTsnClientByUid(uid, session):
     account: TsnAccount_Model = await getTsnAccountByUid(uid, session)
@@ -106,38 +97,35 @@ async def getTsnClientByUid(uid, session):
     elif account.school.sys_type == 1:
         return await getPrivateVersionClient(account)
     else:
-        raise TiShiNengError("未知的系统类型", 10001)
-
+        raise TiShiNengError('未知的系统类型', 10001)
 
 async def tsnPasswordAuthServer(schoolId, userName, password, session):
     schoolModel = await getSchoolBySchoolId(schoolId, session)
     if not schoolModel:
-        raise TiShiNengError("学校不存在")
+        raise TiShiNengError('学校不存在')
     brandName = deviceModel.brand
     deviceNum = deviceModel.model
     osVersion = deviceModel.osver
     a_list = deviceModel.a_list
     deviceId = str(uuid.uuid4())
     if schoolModel.isPublicVersion():
-        tsn = TiShiNengSdkPublic(0, schoolId, schoolModel.school_code, schoolModel.open_id, deviceId, brandName,
-                                 deviceNum, osVersion, "", a_list)
+        tsn = TiShiNengSdkPublic(0, schoolId, schoolModel.school_code, schoolModel.open_id, deviceId, brandName, deviceNum, osVersion, '', a_list)
         if schoolModel.lan_url != '' and schoolModel.lan_url is not None:
             tsn.setCloudUrl(schoolModel.lan_url)
         loginResp = await tsn.getAccessToken(userName, password)
         logger.info(loginResp)
         if 'msg' in loginResp:
             if 'Bad credentials' in loginResp['msg']:
-                raise TiShiNengError("用户名错误")
+                raise TiShiNengError('用户名错误')
             elif 'Wrong password.' in loginResp['msg']:
-                raise TiShiNengError("密码错误")
+                raise TiShiNengError('密码错误')
             raise TiShiNengError(loginResp['msg'])
         accessToken = loginResp['access_token']
         refreshToken = loginResp['refresh_token']
         expiresIn = loginResp['expires_in']
         uid = loginResp['user_id']
         del tsn
-        tsn = TiShiNengSdkPublic(uid, schoolId, schoolModel.school_code, schoolModel.open_id, deviceId, brandName,
-                                 deviceNum, osVersion, accessToken, a_list)
+        tsn = TiShiNengSdkPublic(uid, schoolId, schoolModel.school_code, schoolModel.open_id, deviceId, brandName, deviceNum, osVersion, accessToken, a_list)
         if schoolModel.lan_url != '' and schoolModel.lan_url is not None:
             tsn.setCloudUrl(schoolModel.lan_url)
         userInfo = await tsn.getLoginUserInfo()
@@ -162,8 +150,7 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
             await session.flush()
         return uid
     else:
-        tsn = TiShiNengPrivate(0, schoolId, schoolModel.school_code, schoolModel.is_open_encry, deviceId, brandName,
-                               deviceNum, "")
+        tsn = TiShiNengPrivate(0, schoolId, schoolModel.school_code, schoolModel.is_open_encry, deviceId, brandName, deviceNum, '')
         tsn.setAppId(schoolModel.open_id)
         tsn.setSchoolUrl(schoolModel.school_url)
         loginResp = await tsn.appLogin(userName, password)

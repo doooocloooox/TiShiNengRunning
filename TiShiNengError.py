@@ -1,7 +1,7 @@
 import enum
 
-
 class TiShiNengError(Exception):
+
     def __init__(self, message, code=10000):
         self.code = code
         self.message = message

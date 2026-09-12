@@ -1,215 +1,80 @@
-import math
+from __future__ import annotations
 import random
+from typing import List, Optional, Sequence, Tuple
+from track_log import logger
+from step_buckets import DEFAULT_BUCKET_SECONDS, BucketAllocation, StepInterval, allocate_steps
+from track_clean import CleanOptions, InsufficientTrackError, clean_track
+from track_geo import EARTH_RADIUS_KM, EARTH_RADIUS_M, METERS_PER_KM, LocalProjection, haversine_distance, normalize_points, point_list_distance
+from track_metrics import cadence_spm, compute_metrics, cumulative_distances, format_pace, pace_seconds_per_km, stride_for_speed, steps_for_interval
+from track_resample import PointRisk, ResampleOptions, ResampledTrack, TrackGenerationError, TrackSample, resample_track
+from track_validate import ValidationReport, validate_track
+__all__ = ['EARTH_RADIUS_KM', 'EARTH_RADIUS_M', 'METERS_PER_KM', 'TsnRunPolyline', 'genTiShiNengRunPathRepeat', 'generate_run_track', 'to_legacy_points', 'haversine_distance', 'getPointListDistance', 'LocalProjection', 'ResampleOptions', 'ResampledTrack', 'TrackGenerationError', 'InsufficientTrackError']
 
-from loguru import logger
-
-EARTH_RADIUS_KM = 6371.009
-METERS_PER_KM = 1000.0
-
+def getPointListDistance(pointList: Sequence[Sequence[float]]) -> float:
+    return point_list_distance(pointList)
 
 class TsnRunPolyline:
-    def __init__(self, points):
-        """
-        初始化 Polyline 对象
-        :param geoData:
-        """
-        self.points = points
-        self.distances = self.calculate_distances()
+
+    def __init__(self, points: Sequence[Sequence[float]]):
+        self.points = normalize_points(points)
+        self.distances = [haversine_distance(self.points[i][1], self.points[i][0], self.points[i + 1][1], self.points[i + 1][0]) for i in range(len(self.points) - 1)]
         self.total_length = sum(self.distances)
 
-    def calculate_distances(self):
-        """
-        计算并储存每两个连续点之间的距离
-        :return: List of distances
-        """
-        distances = []
-        for i in range(len(self.points) - 1):
-            distances.append(self.haversine_distance(self.points[i], self.points[i + 1]))
-        return distances
+    def haversine_distance(self, point1: Sequence[float], point2: Sequence[float]) -> float:
+        return haversine_distance(point1[1], point1[0], point2[1], point2[0])
 
-    def haversine_distance(self, point1, point2):
-        """
-        计算两个经纬度点之间的 haversine 距离
-        :param point1: (latitude1, longitude1)
-        :param point2: (latitude2, longitude2)
-        :return: 距离（米）
-        """
-        lon1, lat1 = point1
-        lon2, lat2 = point2
-        R = 6371000  # 地球半径，单位米
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        delta_phi = math.radians(lat2 - lat1)
-        delta_lambda = math.radians(lon2 - lon1)
+    def interpolate_point(self, point1: Sequence[float], point2: Sequence[float], ratio: float) -> Tuple[float, float]:
+        projection = LocalProjection(point1[0], point1[1])
+        return projection.interpolate(point1[0], point1[1], point2[0], point2[1], ratio)
 
-        a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    def simulate_motion(self, avg_speed: float, distance: float):
+        if avg_speed <= 0:
+            raise TrackGenerationError(f'平均速度必须为正: {avg_speed}')
+        plan_use_time = distance / avg_speed
+        track = resample_track(points=self.points, need_distance_m=distance, start_timestamp_ms=0.0, plan_use_time_s=plan_use_time, options=ResampleOptions(speed_jitter=0.08))
+        sampled = [{'lat': s.lat, 'lon': s.lon, 'millisecond': s.dt_ms, 'speed': s.speed_mps, 'distance': s.distance_m} for s in track.samples]
+        logger.info(f'traveled_distance:{track.total_distance_m}')
+        return (sampled, track.total_distance_m)
 
-        return R * c
-
-    def simulate_motion(self, avg_speed, distance):
-        """
-        模拟运动
-        :param avg_speed: 平均移动速度（米/秒）
-        :param distance: 总距离（米）
-        :return: 行程过的所有 (latitude, longitude) 点
-        """
-        traveled_distance = 0
-        current_path = self.points
-        path_length = len(current_path)
-        sampled_points = []
-        current_point = current_path[0]
-        path_index = 0
-        minMillisecondInterval = 1000
-        maxMillisecondInterval = 1300
-        while traveled_distance < distance:
-            # 生成随机速度
-            millisecond_interval = random.randint(minMillisecondInterval, maxMillisecondInterval)
-            time_interval = millisecond_interval / 1000
-            speed_variation = random.uniform(0.6, 1)
-            actual_speed = avg_speed * speed_variation
-            motion_distance = actual_speed * time_interval  # 应行驶的距离
-
-            accumulated_distance = 0
-
-            while accumulated_distance < motion_distance and path_index < path_length - 1:
-                next_point = current_path[path_index + 1]
-                next_distance = self.haversine_distance(current_point, next_point)
-
-                if accumulated_distance + next_distance < motion_distance:
-                    accumulated_distance += next_distance
-                    current_point = next_point
-                    path_index += 1
-                else:
-                    # 需要在当前点和下一个点之间插值
-                    excess_distance = motion_distance - accumulated_distance
-                    ratio = excess_distance / next_distance
-                    interpolated_point = self.interpolate_point(current_point, next_point, ratio)
-                    sampled_points.append({
-                        "lat": interpolated_point[1],
-                        "lon": interpolated_point[0],
-                        "millisecond": millisecond_interval,
-                        "speed": actual_speed,
-                        "distance": motion_distance,
-                    })
-                    current_point = interpolated_point  # 将当前点更新为插值点
-                    traveled_distance += motion_distance
-                    break
-
-            if path_index >= path_length - 1:
-                current_path = list(reversed(current_path))
-                path_index = 0
-                current_point = current_path[0]
-        logger.info(f"traveled_distance:{traveled_distance}")
-        return sampled_points, traveled_distance
-
-    def interpolate_point(self, point1, point2, ratio):
-        """
-        在两个点之间插值生成一个新点
-        :param point1: 起点
-        :param point2: 终点
-        :param ratio: 插值比率（0 到 1 之间）
-        :return: 插值生成的新 (latitude, longitude) 点
-        """
-        lon1, lat1 = point1
-        lon2, lat2 = point2
-        lat = lat1 + (lat2 - lat1) * ratio
-        lon = lon1 + (lon2 - lon1) * ratio
-        return lon, lat
-
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    # Calculate the haversine distance between two points given their latitude and longitude
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-
-    d_lat = lat2_rad - lat1_rad
-    d_lon = lon2_rad - lon1_rad
-
-    a = math.sin(d_lat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(d_lon / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance_km = EARTH_RADIUS_KM * c
-
-    return distance_km * METERS_PER_KM
-
-
-def getPointListDistance(pointList):
-    tmpSum = 0
-    for index in range(1, len(pointList)):
-        pre = pointList[index - 1]
-        cur = pointList[index]
-        distance = haversine_distance(pre[1], pre[0], cur[1], cur[0])
-        tmpSum += distance
-    return tmpSum
-
-
-def genTiShiNengRunPathRepeat(pointList, needDistance, startTimeStamp, planUseTime, isPublic=True):
-    result = []
-    avgSpeed = needDistance / planUseTime  # 平均速度 m/s
-    tsnRunPolyline = TsnRunPolyline(pointList)
-    simulateMotionData, sumDistance = tsnRunPolyline.simulate_motion(avgSpeed, needDistance)
-    sumStepNum = 0
-    sumMinStepNum = 0
-    stepList = []
-    currentStepTime = 0
-    logger.info(f"needDistance:{needDistance},sumDistance:{sumDistance}")
-    runTotalTime = 0
-    for simulateMotionPoint in simulateMotionData:
-        distance = simulateMotionPoint['distance']
-        stepDistance = random.uniform(0.7, 0.9)
-        stepNum = int(distance / stepDistance)
-        speed = round(simulateMotionPoint['speed'], 9)
-        sumMinStepNum += stepNum
-        sumStepNum += stepNum
-        usedMillisecond = simulateMotionPoint['millisecond']
-        usedTime = usedMillisecond / 1000
-        runTotalTime += usedTime
-        if currentStepTime + usedTime > 60:
-            stepList.append(sumMinStepNum)
-            currentStepTime = 0
-            sumMinStepNum = 0
-        currentStepTime += usedTime
-        lat = round(simulateMotionPoint['lat'], 15)
-        lon = round(simulateMotionPoint['lon'], 15)
-
+def to_legacy_points(track: ResampledTrack, isPublic: bool=True, coord_decimals: int=7, speed_decimals: int=6) -> List[dict]:
+    result: List[dict] = []
+    cumulative_steps = 0.0
+    for sample in track.samples:
+        cumulative_steps += steps_for_interval(sample.distance_m, sample.speed_mps)
+        lat = round(sample.lat, coord_decimals)
+        lon = round(sample.lon, coord_decimals)
+        speed = round(sample.speed_mps, speed_decimals)
+        steps_int = int(round(cumulative_steps))
         if isPublic:
-            tmp = {
-                'a': lat,
-                'c': int(runTotalTime),
-                "e": sumStepNum,  # 步数
-                "i": False,
-                "l": 1,
-                "o": lon,
-                "s": speed,  # 速度
-                "t": startTimeStamp + usedMillisecond,
-                'distance': distance,
-            }
+            result.append({'a': lat, 'c': int(sample.offset_s), 'e': steps_int, 'i': bool(sample.paused), 'l': 1, 'o': lon, 's': speed, 't': int(sample.t_ms), 'distance': sample.distance_m})
         else:
-            tmp = {
-                "countTime": 0,
-                "latitude": lat,
-                "locationType": 1,
-                "longitude": lon,
-                "puase": False,
-                "speed": speed,
-                'stability': 0,
-                "time": startTimeStamp + usedMillisecond,
-                "distance": distance,
-            }
-        startTimeStamp += usedMillisecond
-        result.append(tmp)
-    stepList.append(sumMinStepNum)
-    if not isPublic:
-        result[-1]['puase'] = True
-        result[-2]['puase'] = True
-    else:
-        lastC = result[-2]['c']
-        lastE = result[-2]['e']
-        result[-1]['c'] = lastC
-        result[-1]['e'] = lastE
+            result.append({'countTime': 0, 'latitude': lat, 'locationType': 1, 'longitude': lon, 'puase': bool(sample.paused), 'speed': speed, 'stability': 0, 'time': int(sample.t_ms), 'distance': sample.distance_m})
+    if len(result) >= 2 and isPublic:
+        result[-1]['c'] = result[-2]['c']
+        result[-1]['e'] = result[-2]['e']
         result[-1]['i'] = True
         result[-2]['i'] = True
+    return result
 
-    return result, stepList, sumDistance
+def generate_run_track(pointList: Sequence[Sequence[float]], needDistance: float, startTimeStamp: float, planUseTime: float, isPublic: bool=True, options: Optional[ResampleOptions]=None, rng: Optional[random.Random]=None, risk_resolver=None) -> Tuple[ResampledTrack, BucketAllocation, ValidationReport]:
+    track = resample_track(points=pointList, need_distance_m=needDistance, start_timestamp_ms=startTimeStamp, plan_use_time_s=planUseTime, options=options, rng=rng, risk_resolver=risk_resolver)
+    intervals = [StepInterval(start_offset_s=start, duration_s=duration, steps=steps) for start, duration, steps in track.step_samples()]
+    allocation = allocate_steps(intervals, bucket_seconds=DEFAULT_BUCKET_SECONDS, estimated=False, total_steps=int(round(sum((iv.steps for iv in intervals)))))
+    report = validate_track(track, bucket_allocation=allocation, total_steps=allocation.total_steps, summary_coords=[track.points[0], track.points[-1]])
+    if not report.ok:
+        logger.warning(report.summary())
+    return (track, allocation, report)
+
+def genTiShiNengRunPathRepeat(pointList: Sequence[Sequence[float]], needDistance: float, startTimeStamp: float, planUseTime: float, isPublic: bool=True) -> Tuple[List[dict], List[int], float]:
+    track, allocation, report = generate_run_track(pointList=pointList, needDistance=needDistance, startTimeStamp=startTimeStamp, planUseTime=planUseTime, isPublic=isPublic)
+    if not report.ok:
+        report.raise_if_failed()
+    result = to_legacy_points(track, isPublic=isPublic)
+    logger.info(f'needDistance:{needDistance},sumDistance:{track.total_distance_m} stepBuckets:{len(allocation.buckets)}/{allocation.total_steps}')
+    return (result, list(allocation.buckets), track.total_distance_m)
+
+def describe_track(track: ResampledTrack) -> dict:
+    chord = compute_metrics(track.points, track.timestamps_ms)
+    elapsed = track.elapsed_s
+    avg_speed = track.total_distance_m / elapsed if elapsed > 0 else 0.0
+    return {'distance_m': round(track.total_distance_m, 3), 'chord_distance_m': round(chord.distance_m, 3), 'elapsed_s': round(elapsed, 1), 'point_count': len(track.samples), 'avg_speed_mps': round(avg_speed, 4), 'pace': format_pace(pace_seconds_per_km(track.total_distance_m, elapsed)), 'cadence_spm': round(cadence_spm(avg_speed), 1), 'stride_m': round(stride_for_speed(avg_speed), 3), 'steps': track.total_steps, 'cleaned_points': track.cleaned_point_count, 'source_points': track.source_point_count, 'notes': track.notes}
