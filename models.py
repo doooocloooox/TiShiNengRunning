@@ -33,7 +33,7 @@ class TsnAccount_Model(Base):
     school_id = Column(Integer, ForeignKey('tsn_school.school_id'), nullable=False)
     school = relationship('TsnSchool_Model', overlaps='accounts')
     username = Column(String(64), nullable=False)
-    password = Column(String(64), nullable=False)
+    password = Column(Text, nullable=False)
     mobile_device_id = Column(String(128), default=getUUID4Str, nullable=False)
     access_token = Column(String(128), nullable=False)
     refresh_token = Column(String(128), nullable=False)

@@ -11,6 +11,8 @@ from AesUtils import AESCrypto
 from RsaUtils import RSACrypto
 from TiShiNengError import TiShiNengError
 from TiShiNengSdkBase import TiShiNengSdkBase
+from config import settings
+from security import safe_json
 import tsn_environment
 import tsn_routes
 import tsn_payload
@@ -29,7 +31,7 @@ class TiShiNengSdkPublic:
         self.appId = 'c9292ee89d2f49492f983f5931af0d09'
         self.appSecret = 'e8167ef026cbc5e456ab837d9d6d9254'
         self.appSign = '7F:C0:22:E6:7C:7D:2A:CC:C3:C8:77:0A:46:13:8D:C3'
-        self.cloudUrl = 'http://a.sxstczx.com'
+        self.cloudUrl = settings.cloud_base_url.rstrip('/')
         self.platform = '1'
         self.tiShiNengBaseClient = TiShiNengSdkBase(uid, schoolId, deviceId, brandName, deviceNum, token)
         self.versionName = self.tiShiNengBaseClient.versionName
@@ -74,7 +76,7 @@ class TiShiNengSdkPublic:
         keys = list(params.keys())
         keys.sort()
         sorted_params = {key: params[key] for key in keys}
-        logger.info(sorted_params)
+        logger.debug('加密请求参数: {}', safe_json(sorted_params))
         encData = randomAesUtils.encrypt(json.dumps(sorted_params, separators=(',', ':')))
         rsaEncryptedAesKey = self.rsaUtils.encrypt_bytes(aesRandomKey.encode())
         if not is_encoded:
@@ -92,7 +94,7 @@ class TiShiNengSdkPublic:
         keys = list(params.keys())
         keys.sort()
         sorted_params = {key: params[key] for key in keys}
-        logger.info(f'getFaceEncParams params={json.dumps(sorted_params)}')
+        logger.debug('人脸请求参数: {}', safe_json(sorted_params))
         encData = randomAesUtils.encrypt(json.dumps(sorted_params, separators=(',', ':')))
         key = self.rsaUtils.encrypt_bytes(aesKey.encode())
         return {'key': key, 'param': encData}

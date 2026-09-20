@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+.env
+tsn_data.db
+tsn_data.db-*
+face_images/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+

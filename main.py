@@ -17,9 +17,11 @@ def getClient():
     tsn = TiShiNengPrivate(1, 1, '', False, str(uuid.uuid4()), 'Xiaomi', '25053RT47C', '')
     return tsn
 
-def getSchoolInfo(schoolCode):
+async def getSchoolInfo(schoolCode):
     url = f'https://h.tsnkj.com/upms/sysSchool/getSchoolInfo?schoolCode={schoolCode}'
-    resp = httpx.get(url, headers={'User-Agent': 'okhttp/4.9.0'})
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False, trust_env=False) as client:
+        resp = await client.get(url, headers={'User-Agent': 'okhttp/4.9.0'})
+    resp.raise_for_status()
     resp = resp.json()
     return resp['data']
 
@@ -94,7 +96,7 @@ class TsnCliManager:
                         lan_url = None
                         if school['sysType'] == '2':
                             try:
-                                schoolInfo = getSchoolInfo(school['schoolCode'])
+                                schoolInfo = await getSchoolInfo(school['schoolCode'])
                                 if schoolInfo:
                                     lan_url = schoolInfo.get('url')
                                     if lan_url:

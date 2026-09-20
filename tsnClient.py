@@ -8,6 +8,7 @@ from deviceModel import deviceModel
 from models import TsnAccount_Model
 from services.tsnAccount.tsnAccountDao import updateAccessToken, getTsnAccountByid, getTsnAccountByUid, addTsnAccount
 from services.tsnSchool.tsnSchoolDao import getSchoolBySchoolId
+from security import protect_secret, reveal_secret, safe_json
 
 async def getPublicVersionClient(accountModel: TsnAccount_Model):
     schoolId = accountModel.school_id
@@ -23,7 +24,7 @@ async def getPublicVersionClient(accountModel: TsnAccount_Model):
     access_token = accountModel.access_token
     fresh_token = accountModel.refresh_token
     username = accountModel.username
-    password = accountModel.password
+    password = reveal_secret(accountModel.password)
     tsn = TiShiNengSdkPublic(uid, schoolId, schoolCode, openId, deviceId, brandName, deviceNum, osVersion, access_token, a_list)
     if lan_url != '' and lan_url is not None:
         tsn.setCloudUrl(lan_url)
@@ -61,7 +62,7 @@ async def getPrivateVersionClient(accountModel: TsnAccount_Model):
     deviceNum = deviceModel.model
     access_token = accountModel.access_token
     username = accountModel.username
-    password = accountModel.password
+    password = reveal_secret(accountModel.password)
     tsn = TiShiNengPrivate(uid, schoolId, schoolCode, isOpenEncry, deviceId, brandName, deviceNum, access_token)
     tsn.setSchoolUrl(school_url)
     tsn.setAppId(openId)
@@ -113,7 +114,7 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         if schoolModel.lan_url != '' and schoolModel.lan_url is not None:
             tsn.setCloudUrl(schoolModel.lan_url)
         loginResp = await tsn.getAccessToken(userName, password)
-        logger.info(loginResp)
+        logger.debug('登录响应: {}', safe_json(loginResp))
         if 'msg' in loginResp:
             if 'Bad credentials' in loginResp['msg']:
                 raise TiShiNengError('用户名错误')
@@ -129,7 +130,7 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         if schoolModel.lan_url != '' and schoolModel.lan_url is not None:
             tsn.setCloudUrl(schoolModel.lan_url)
         userInfo = await tsn.getLoginUserInfo()
-        logger.info(userInfo)
+        logger.debug('用户信息响应: {}', safe_json(userInfo))
         tsnAccountModel = await getTsnAccountByUid(uid, session)
         saveFlag = False
         if not tsnAccountModel:
@@ -139,7 +140,7 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         tsnAccountModel.user_id = uid
         tsnAccountModel.school_id = schoolId
         tsnAccountModel.username = userName
-        tsnAccountModel.password = password
+        tsnAccountModel.password = protect_secret(password)
         tsnAccountModel.mobile_device_id = deviceId
         tsnAccountModel.access_token = accessToken
         tsnAccountModel.refresh_token = refreshToken
@@ -154,7 +155,7 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         tsn.setAppId(schoolModel.open_id)
         tsn.setSchoolUrl(schoolModel.school_url)
         loginResp = await tsn.appLogin(userName, password)
-        logger.info(loginResp)
+        logger.debug('登录响应: {}', safe_json(loginResp))
         userNum = loginResp['userNum']
         uid = loginResp['id']
         token = loginResp['token']
@@ -168,7 +169,7 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         tsnAccountModel.user_id = uid
         tsnAccountModel.school_id = schoolId
         tsnAccountModel.username = userName
-        tsnAccountModel.password = password
+        tsnAccountModel.password = protect_secret(password)
         tsnAccountModel.mobile_device_id = deviceId
         tsnAccountModel.access_token = token
         tsnAccountModel.refresh_token = ''

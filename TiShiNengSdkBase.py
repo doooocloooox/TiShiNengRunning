@@ -3,6 +3,8 @@ import time
 import urllib.parse
 import httpx
 from loguru import logger
+from TiShiNengError import TiShiNengError
+from config import settings
 
 class TiShiNengSdkBase:
 
@@ -15,11 +17,11 @@ class TiShiNengSdkBase:
         self.appId = 'move'
         self.appSecret = 'e8167ef026cbc5e456ab837d9d6d9254'
         self.appSign = '7F:C0:22:E6:7C:7D:2A:CC:C3:C8:77:0A:46:13:8D:C3'
-        self.apiUrl = 'https://m.boxkj.com'
+        self.apiUrl = settings.api_base_url.rstrip('/')
         self.platform = '1'
         self.versionName = '2.0.23'
         self.version = '20230'
-        self.httpClient = httpx.AsyncClient()
+        self.httpClient = httpx.AsyncClient(timeout=settings.http_timeout, follow_redirects=False, trust_env=False)
         self.token = token
         self.headers = {'Host': 'm.boxkj.com', 'token': self.token, 'channel': 'Android', 'version': self.version, 'type': '0', 'Content-Type': 'application/x-www-form-urlencoded', 'accept-encoding': 'gzip', 'user-agent': 'okhttp/4.9.0'}
 
@@ -47,7 +49,7 @@ class TiShiNengSdkBase:
             value = params[key]
             result.append(self.kVtoStr(key, value, False))
         concatenated_string = '&'.join(result)
-        logger.debug(concatenated_string)
+        logger.debug('签名参数已生成（内容已隐藏）')
         return hashlib.md5(concatenated_string.encode()).hexdigest()
 
     async def httpPost(self, url, data):
@@ -64,9 +66,12 @@ class TiShiNengSdkBase:
                 raise Exception(resp['returnMsg'])
             else:
                 return None
-        except Exception as e:
-            logger.exception(e)
-            return None
+        except httpx.TimeoutException as exc:
+            raise TiShiNengError(f'连接服务超时: {url}') from exc
+        except httpx.RequestError as exc:
+            raise TiShiNengError(f'网络请求失败: {type(exc).__name__}: {url}') from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise TiShiNengError(f'服务响应格式异常: {url}') from exc
 
     async def findAllProvince(self):
         params = {}
