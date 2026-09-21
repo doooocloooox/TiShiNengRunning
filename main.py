@@ -323,7 +323,7 @@ class TsnCliManager:
                     run_server.accountModel = selected_account
                     run_server.tsnClient = await getTsnClientById(selected_account.id, db)
                     run_server.isPublic = run_server.tsnClient.isPublic()
-                    face_image_data = await run_server.getFaceImage()
+                    face_image_data = await run_server.getFaceImage(force_refresh=True)
                     if face_image_data:
                         print('\n✅ 人脸图片更新完成！')
                     else:

@@ -6,6 +6,7 @@ import json
 import random
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 import httpx
 from PIL import Image
 from loguru import logger
@@ -78,70 +79,71 @@ class TsnRunServer:
         return (random_longitude, random_latitude)
 
     @staticmethod
-    def add_random_pixels_to_image(image_bytes: bytes, num_pixels: int=None) -> bytes:
+    def _validate_face_image(image_bytes: bytes) -> None:
         if not image_bytes:
-            return image_bytes
-        try:
-            if num_pixels is None:
-                num_pixels = random.randint(5, 15)
-            image = Image.open(io.BytesIO(image_bytes))
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            width, height = image.size
-            pixels = image.load()
-            for _ in range(num_pixels):
-                x = random.randint(10, width - 10)
-                y = random.randint(10, height - 10)
-                current_pixel = pixels[x, y]
-                new_pixel = list(current_pixel)
-                for i in range(random.randint(1, 3)):
-                    channel = random.randint(0, 2)
-                    delta = random.randint(-5, 5)
-                    new_pixel[channel] = max(0, min(255, new_pixel[channel] + delta))
-                pixels[x, y] = tuple(new_pixel)
-            output = io.BytesIO()
-            image.save(output, format='JPEG', quality=95)
-            modified_bytes = output.getvalue()
-            logger.debug(f'图片修改完成: 添加了 {num_pixels} 个随机像素点，原始大小: {len(image_bytes)} bytes, 修改后: {len(modified_bytes)} bytes')
-            return modified_bytes
-        except Exception as e:
-            logger.error(f'修改图片失败: {e}, 返回原始图片')
-            return image_bytes
+            raise ValueError('图片内容为空')
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise ValueError('图片超过 10MB 限制')
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.verify()
 
-    async def getFaceImage(self):
+    @classmethod
+    def _read_face_image(cls, path: Path) -> bytes:
+        image_bytes = path.read_bytes()
+        cls._validate_face_image(image_bytes)
+        return image_bytes
+
+    @staticmethod
+    def _normalize_face_list(payload):
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            for key in ('records', 'list', 'rows', 'data'):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return value
+        return []
+
+    async def getFaceImage(self, force_refresh=False):
         face_dir = Path('face_images') / str(self.accountModel.school_id) / str(self.accountModel.user_id)
         face_dir.mkdir(parents=True, exist_ok=True)
         existing_images = list(face_dir.glob('*.jpg')) + list(face_dir.glob('*.png'))
-        if existing_images:
-            selected_image = random.choice(existing_images)
-            logger.info(f'使用本地人脸图片: {selected_image}')
-            with open(selected_image, 'rb') as f:
-                return f.read()
+        if existing_images and not force_refresh:
+            for selected_image in random.sample(existing_images, len(existing_images)):
+                try:
+                    logger.info(f'使用本地人脸图片: {selected_image}')
+                    return self._read_face_image(selected_image)
+                except (OSError, ValueError) as exc:
+                    logger.warning(f'忽略无效的人脸缓存 {selected_image.name}: {exc}')
         logger.info('本地没有人脸图片，从服务器获取...')
         face_list_resp = await self.tsnClient.listBasUserImageFace()
-        logger.info(f'API返回数据: {face_list_resp}')
-        if not face_list_resp:
+        if face_list_resp is None:
             raise TiShiNengError('获取人脸列表失败，请检查网络连接或账号状态', 20001)
-        face_data = face_list_resp
-        if not face_data or len(face_data) == 0:
+        face_data = self._normalize_face_list(face_list_resp)
+        logger.info(f'底库返回 {len(face_data)} 条人脸图片记录')
+        if not face_data:
             raise TiShiNengError('该账号没有人脸图片记录，请先在APP中上传人脸照片', 20002)
         download_count = 0
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, trust_env=False) as client:
             for idx, face_item in enumerate(face_data):
                 image_url = face_item.get('imageRouteUrl')
                 if not image_url:
                     continue
                 try:
-                    logger.info(f'下载人脸图片 {idx + 1}/{len(face_data)}: {image_url}')
-                    resp = await client.get(image_url, timeout=30.0)
+                    parsed_url = urlparse(image_url)
+                    if parsed_url.scheme not in ('http', 'https') or not parsed_url.hostname:
+                        raise ValueError('服务端返回了无效的图片地址')
+                    logger.info(f'下载人脸图片 {idx + 1}/{len(face_data)}（来源: {parsed_url.hostname}）')
+                    resp = await client.get(image_url)
                     if resp.status_code == 200:
+                        self._validate_face_image(resp.content)
                         image_id = face_item.get('id', f'face_{idx}')
-                        ext = '.jpg'
-                        if '.' in image_url:
-                            ext = '.' + image_url.rsplit('.', 1)[-1].split('?')[0]
+                        content_type = resp.headers.get('content-type', '').lower()
+                        ext = '.png' if 'png' in content_type else '.jpg'
                         file_path = face_dir / f'{image_id}{ext}'
-                        with open(file_path, 'wb') as f:
-                            f.write(resp.content)
+                        temp_path = file_path.with_suffix(file_path.suffix + '.tmp')
+                        temp_path.write_bytes(resp.content)
+                        temp_path.replace(file_path)
                         logger.info(f'人脸图片已保存: {file_path}')
                         download_count += 1
                     else:
@@ -163,9 +165,9 @@ class TsnRunServer:
             return
         if sleep > 0:
             await asyncio.sleep(sleep)
-        original_image = await self.getFaceImage()
-        modified_image = self.add_random_pixels_to_image(original_image)
-        await self.tsnClient.exerciseRunningFace(modified_image, coordinates, self.identify, self.publicRunTypeConvert(self.logRunType), faceType)
+        face_image = await self.getFaceImage()
+
+        await self.tsnClient.exerciseRunningFace(face_image, coordinates, self.identify, self.publicRunTypeConvert(self.logRunType), faceType)
 
     async def queryPath(self):
         resultStmt = select(RunPath).where(RunPath.school_code == self.tsnClient.schoolCode).order_by(func.abs(RunPath.sport_range - self.runKiloMeter)).limit(10)
