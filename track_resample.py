@@ -169,6 +169,23 @@ class _PathWalker:
             return
         raise TrackGenerationError(f'未知的 loop_mode: {self.loop_mode}')
 
+
+
+def _smoothstep(value: float) -> float:
+    value = max(0.0, min(1.0, value))
+    return value * value * (3.0 - 2.0 * value)
+
+def _phase_factor(distance_m: float, total_distance_m: float, transition_ratio: float = 0.04) -> float:
+    ratio = distance_m / total_distance_m if total_distance_m > 0 else 0.0
+    boundaries = (0.12, 0.25, 0.48, 0.60, 0.86)
+    factors = (0.90, 1.12, 0.96, 1.18, 0.94, 0.88)
+    index = next((i for i, boundary in enumerate(boundaries) if ratio < boundary), len(factors) - 1)
+    for boundary_index, boundary in enumerate(boundaries, start=1):
+        if abs(ratio - boundary) <= transition_ratio:
+            progress = _smoothstep((ratio - boundary + transition_ratio) / (2.0 * transition_ratio))
+            return factors[boundary_index - 1] + (factors[boundary_index] - factors[boundary_index - 1]) * progress
+    return factors[index]
+
 def _make_factor_sampler(rng: random.Random, options: ResampleOptions) -> Callable[[], float]:
     if options.speed_jitter <= 0:
         return lambda: 1.0
@@ -233,7 +250,8 @@ def resample_track(points: Sequence[Sequence[float]], need_distance_m: float, st
     while traveled < need_distance_m - 1e-09:
         if len(samples) >= options.max_samples:
             raise TrackGenerationError(f'采样点数量超过上限 {options.max_samples}，请检查目标距离/速度参数')
-        speed = base_speed * factor()
+        phase_factor = _phase_factor(traveled, need_distance_m)
+        speed = base_speed * phase_factor * factor()
         if speed <= 0:
             raise TrackGenerationError('采样速度非正')
         if options.interval_jitter_s > 0:
