@@ -28,24 +28,29 @@ async def getPublicVersionClient(accountModel: TsnAccount_Model):
     tsn = TiShiNengSdkPublic(uid, schoolId, schoolCode, openId, deviceId, brandName, deviceNum, osVersion, access_token, a_list)
     if lan_url != '' and lan_url is not None:
         tsn.setCloudUrl(lan_url)
+    async def reauthenticate():
+        token_resp = await tsn.getAccessToken(username, password)
+        logger.debug('重新登录响应: {}', safe_json(token_resp))
+        if not isinstance(token_resp, dict) or 'msg' in token_resp or not token_resp.get('access_token'):
+            message = token_resp.get('msg', '账号密码重新授权失败') if isinstance(token_resp, dict) else '账号密码重新授权失败'
+            raise TiShiNengError(message, 10001)
+        async for newDb in get_db():
+            await updateAccessToken(accountModel.id, newDb, token_resp['access_token'], token_resp['refresh_token'], token_resp['expires_in'])
+        tsn.setToken(token_resp['access_token'])
     try:
-        freshTokenResp = await tsn.freshToken(fresh_token)
-        logger.info(freshTokenResp)
-        if 'msg' not in freshTokenResp:
+        fresh_token_resp = await tsn.freshToken(fresh_token)
+        refresh_ok = isinstance(fresh_token_resp, dict) and 'msg' not in fresh_token_resp and bool(fresh_token_resp.get('access_token'))
+        if refresh_ok:
             async for newDb in get_db():
-                await updateAccessToken(accountModel.id, newDb, freshTokenResp['access_token'], freshTokenResp['refresh_token'], freshTokenResp['expires_in'])
-            tsn.setToken(freshTokenResp['access_token'])
+                await updateAccessToken(accountModel.id, newDb, fresh_token_resp['access_token'], fresh_token_resp['refresh_token'], fresh_token_resp['expires_in'])
+            tsn.setToken(fresh_token_resp['access_token'])
+        else:
+            logger.info('刷新令牌已失效，使用账号密码重新授权')
+            await reauthenticate()
     except TiShiNengError as e:
         if e.code == 401:
-            logger.info('token失效，重新获取')
-            tokenResp = await tsn.getAccessToken(username, password)
-            logger.debug('重新登录响应: {}', safe_json(tokenResp))
-            if 'msg' not in tokenResp:
-                async for newDb in get_db():
-                    await updateAccessToken(accountModel.id, newDb, tokenResp['access_token'], tokenResp['refresh_token'], tokenResp['expires_in'])
-                tsn.setToken(tokenResp['access_token'])
-            else:
-                raise TiShiNengError(tokenResp['msg'], 10001)
+            logger.info('刷新令牌已失效，使用账号密码重新授权')
+            await reauthenticate()
         else:
             raise e
     return tsn

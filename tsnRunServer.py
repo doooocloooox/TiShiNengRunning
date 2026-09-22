@@ -13,6 +13,8 @@ from loguru import logger
 from sqlalchemy import select, func
 from TiShiNengError import TiShiNengError
 from TiShiNengRunPathManage import genTiShiNengRunPathRepeat
+from historical_track_pool import HistoricalRoutePool
+from track_geo import haversine_distance, point_list_distance
 from database import get_db
 from models import TsnAccount_Model, RunPath
 from services.tsnAccount.tsnAccountDao import getTsnAccountByid
@@ -176,9 +178,9 @@ class TsnRunServer:
             runPathList = result.scalars().all()
             if len(runPathList) == 0:
                 raise TiShiNengError('没有可用的跑步路线', 200000)
-            runPath = random.choice(runPathList)
-            result = {'runLinePath': json.loads(runPath.run_line_path)}
-            runLinePath = result['runLinePath']
+            route_pool = HistoricalRoutePool.from_routes([json.loads(item.run_line_path) for item in runPathList])
+            runLinePath = route_pool.choose(random.Random())
+            logger.info('历史路线池选择: 候选=%s, 区域包络=%s, 点数=%s', len(route_pool.routes), route_pool.bounds, len(runLinePath))
             return runLinePath
         return None
 
