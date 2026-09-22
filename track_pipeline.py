@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional, Sequence
 
 from track_clean import CleanOptions, CleanResult, clean_track
@@ -27,8 +27,7 @@ class OfflineTrackResult:
 def generate_offline_track(points: Sequence[Sequence[float]], *, target_distance_m: float, plan_use_time_s: float, start_timestamp_ms: float = 0.0, seed: int = 0, clean_options: Optional[CleanOptions] = None, resample_options: Optional[ResampleOptions] = None) -> OfflineTrackResult:
     """Generate and validate a track without network, account, or upload side effects."""
     cleaned = clean_track(points, options=clean_options, strict=True)
-    options = resample_options or ResampleOptions()
-    options.clean_options = None
+    options = replace(resample_options or ResampleOptions(), clean_options=None)
     track = resample_track(cleaned.points, need_distance_m=target_distance_m, start_timestamp_ms=start_timestamp_ms, plan_use_time_s=plan_use_time_s, options=options, rng=random.Random(seed), clean=False)
     validation = validate_track(track)
     notes = list(cleaned.notes)

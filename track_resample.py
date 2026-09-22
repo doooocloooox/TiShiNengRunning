@@ -186,6 +186,12 @@ def _phase_factor(distance_m: float, total_distance_m: float, transition_ratio: 
             return factors[boundary_index - 1] + (factors[boundary_index] - factors[boundary_index - 1]) * progress
     return factors[index]
 
+def _phase_normalization(total_distance_m: float, transition_ratio: float = 0.04, steps: int = 2048) -> float:
+    if total_distance_m <= 0:
+        return 1.0
+    reciprocal_sum = sum(1.0 / _phase_factor(total_distance_m * (i + 0.5) / steps, total_distance_m, transition_ratio) for i in range(steps))
+    return reciprocal_sum / steps
+
 def _make_factor_sampler(rng: random.Random, options: ResampleOptions) -> Callable[[], float]:
     if options.speed_jitter <= 0:
         return lambda: 1.0
@@ -243,14 +249,15 @@ def resample_track(points: Sequence[Sequence[float]], need_distance_m: float, st
         raise TrackGenerationError('基准速度非法')
     walker = _PathWalker(path_points, options.loop_mode)
     factor = _make_factor_sampler(rng, options)
-    samples: List[TrackSample] = []
+    samples: List[TrackSample] = [TrackSample(path_points[0][0], path_points[0][1], start_timestamp_ms, 0.0, 0.0, 0.0, 0.0, base_speed)]
     traveled = 0.0
     offset_s = 0.0
+    phase_normalization = _phase_normalization(need_distance_m)
     current = walker.current_point()
     while traveled < need_distance_m - 1e-09:
         if len(samples) >= options.max_samples:
             raise TrackGenerationError(f'采样点数量超过上限 {options.max_samples}，请检查目标距离/速度参数')
-        phase_factor = _phase_factor(traveled, need_distance_m)
+        phase_factor = _phase_factor(traveled, need_distance_m) * phase_normalization
         speed = base_speed * phase_factor * factor()
         if speed <= 0:
             raise TrackGenerationError('采样速度非正')
