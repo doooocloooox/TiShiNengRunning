@@ -34,6 +34,9 @@ class TiShiNengPrivate:
     def isPublic(self):
         return False
 
+    async def aclose(self):
+        await self.tiShiNengBaseClient.aclose()
+
     @staticmethod
     def kVtoStr(key, value, is_encoded):
         if is_encoded:

@@ -24,11 +24,13 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         if DATABASE_URL.startswith('sqlite'):
             from security import protect_secret
-            rows = (await conn.execute(text('SELECT id, password FROM tsn_account'))).all()
-            for account_id, password in rows:
-                protected = protect_secret(password or '')
-                if protected != password:
-                    await conn.execute(text('UPDATE tsn_account SET password = :password WHERE id = :account_id'), {'password': protected, 'account_id': account_id})
+            rows = (await conn.execute(text('SELECT id, password, access_token, refresh_token FROM tsn_account'))).all()
+            for account_id, password, access_token, refresh_token in rows:
+                protected_password = protect_secret(password or '')
+                protected_access = protect_secret(access_token or '')
+                protected_refresh = protect_secret(refresh_token or '')
+                if (protected_password, protected_access, protected_refresh) != (password, access_token, refresh_token):
+                    await conn.execute(text('UPDATE tsn_account SET password = :password, access_token = :access_token, refresh_token = :refresh_token WHERE id = :account_id'), {'password': protected_password, 'access_token': protected_access, 'refresh_token': protected_refresh, 'account_id': account_id})
 
 async def close_db():
     await engine.dispose()

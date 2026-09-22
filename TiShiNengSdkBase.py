@@ -105,3 +105,6 @@ class TiShiNengSdkBase:
 
     def getHttpClient(self):
         return self.httpClient
+
+    async def aclose(self):
+        await self.httpClient.aclose()

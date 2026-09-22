@@ -35,8 +35,8 @@ class TsnAccount_Model(Base):
     username = Column(String(64), nullable=False)
     password = Column(Text, nullable=False)
     mobile_device_id = Column(String(128), default=getUUID4Str, nullable=False)
-    access_token = Column(String(128), nullable=False)
-    refresh_token = Column(String(128), nullable=False)
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=False)
     expires_in = Column(Integer, nullable=False)
     auth_code = Column(String(128), default=getUUID4Str)
 

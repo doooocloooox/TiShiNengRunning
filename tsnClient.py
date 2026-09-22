@@ -21,8 +21,8 @@ async def getPublicVersionClient(accountModel: TsnAccount_Model):
     deviceNum = deviceModel.model
     osVersion = deviceModel.osver
     a_list = deviceModel.a_list
-    access_token = accountModel.access_token
-    fresh_token = accountModel.refresh_token
+    access_token = reveal_secret(accountModel.access_token)
+    fresh_token = reveal_secret(accountModel.refresh_token)
     username = accountModel.username
     password = reveal_secret(accountModel.password)
     tsn = TiShiNengSdkPublic(uid, schoolId, schoolCode, openId, deviceId, brandName, deviceNum, osVersion, access_token, a_list)
@@ -39,7 +39,7 @@ async def getPublicVersionClient(accountModel: TsnAccount_Model):
         if e.code == 401:
             logger.info('token失效，重新获取')
             tokenResp = await tsn.getAccessToken(username, password)
-            logger.info(tokenResp)
+            logger.debug('重新登录响应: {}', safe_json(tokenResp))
             if 'msg' not in tokenResp:
                 async for newDb in get_db():
                     await updateAccessToken(accountModel.id, newDb, tokenResp['access_token'], tokenResp['refresh_token'], tokenResp['expires_in'])
@@ -60,7 +60,7 @@ async def getPrivateVersionClient(accountModel: TsnAccount_Model):
     deviceId = accountModel.mobile_device_id
     brandName = deviceModel.brand
     deviceNum = deviceModel.model
-    access_token = accountModel.access_token
+    access_token = reveal_secret(accountModel.access_token)
     username = accountModel.username
     password = reveal_secret(accountModel.password)
     tsn = TiShiNengPrivate(uid, schoolId, schoolCode, isOpenEncry, deviceId, brandName, deviceNum, access_token)
@@ -74,7 +74,7 @@ async def getPrivateVersionClient(accountModel: TsnAccount_Model):
         if e.code == 401 or e.message == '登录失效' or '学生信息系统不存在' in e.message:
             logger.info('token失效，重新获取')
             tokenResp = await tsn.appLogin(username, password)
-            logger.info(tokenResp)
+            logger.debug('重新登录响应: {}', safe_json(tokenResp))
             async for newDb in get_db():
                 await updateAccessToken(accountModel.id, newDb, tokenResp['token'], '2', 86399)
             tsn.setAccessToken(tokenResp['token'])
@@ -142,8 +142,8 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         tsnAccountModel.username = userName
         tsnAccountModel.password = protect_secret(password)
         tsnAccountModel.mobile_device_id = deviceId
-        tsnAccountModel.access_token = accessToken
-        tsnAccountModel.refresh_token = refreshToken
+        tsnAccountModel.access_token = protect_secret(accessToken)
+        tsnAccountModel.refresh_token = protect_secret(refreshToken)
         tsnAccountModel.expires_in = expiresIn
         if saveFlag:
             await addTsnAccount(tsnAccountModel, session)
@@ -171,8 +171,8 @@ async def tsnPasswordAuthServer(schoolId, userName, password, session):
         tsnAccountModel.username = userName
         tsnAccountModel.password = protect_secret(password)
         tsnAccountModel.mobile_device_id = deviceId
-        tsnAccountModel.access_token = token
-        tsnAccountModel.refresh_token = ''
+        tsnAccountModel.access_token = protect_secret(token)
+        tsnAccountModel.refresh_token = protect_secret('')
         tsnAccountModel.expires_in = 86399
         if saveFlag:
             await addTsnAccount(tsnAccountModel, session)

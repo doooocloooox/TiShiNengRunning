@@ -1,6 +1,7 @@
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from models import TsnAccount_Model
+from security import protect_secret
 
 async def getTsnAccountByid(accountId, session) -> TsnAccount_Model:
     stmt = select(TsnAccount_Model).options(selectinload(TsnAccount_Model.school)).where(TsnAccount_Model.id == accountId)
@@ -22,7 +23,7 @@ async def getTsnAccountByUid(uid, session, schoolId=None) -> TsnAccount_Model:
     return account
 
 async def updateAccessToken(accountId, session, accessToken, refreshToken, expiresIn):
-    stmt = update(TsnAccount_Model).where(TsnAccount_Model.id == accountId).values(access_token=accessToken, refresh_token=refreshToken, expires_in=expiresIn)
+    stmt = update(TsnAccount_Model).where(TsnAccount_Model.id == accountId).values(access_token=protect_secret(accessToken or ''), refresh_token=protect_secret(refreshToken or ''), expires_in=expiresIn)
     await session.execute(stmt)
     await session.flush()
     return True
